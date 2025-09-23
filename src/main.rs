@@ -13,9 +13,8 @@ fn main() {
     application.connect_activate(|app| {
         // --- boutons icônes (boutons sans texte) ---
         let convert_btn = Button::builder()
-            .icon_name("media-playback-start-symbolic")
+            .label("Convertir")
             .build();
-        convert_btn.set_tooltip_text(Some("Convertir"));
 
         let file_btn = Button::builder()
             .icon_name("document-open-symbolic")
