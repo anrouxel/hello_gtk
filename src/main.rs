@@ -39,6 +39,7 @@ fn main() {
             .application(app)
             .title("First App")
             .default_width(350)
+            .default_height(350)
             // add content to window
             .content(&content)
             .build();
