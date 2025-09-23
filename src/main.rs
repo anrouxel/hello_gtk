@@ -4,8 +4,6 @@ use gtk::{gio, Button, FileDialog, FileFilter, Box as GtkBox, ListBox, Orientati
 use glib;
 
 fn main() {
-    adw::init().expect("Failed to init adw");
-
     let application = Application::builder()
         .application_id("com.example.FirstAdwaitaApp")
         .build();
