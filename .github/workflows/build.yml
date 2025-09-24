@@ -17,6 +17,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install Rust toolchain (GNU)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable-x86_64-pc-windows-gnu
+          profile: minimal
+
       - name: Setup MSYS2 (UCRT64) and install GTK4 + libadwaita
         uses: msys2/setup-msys2@v2
         id: msys2
@@ -35,11 +41,8 @@ jobs:
             mingw-w64-ucrt-x86_64-glib2
 
       - name: Build (cargo)
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable-x86_64-pc-windows-gnu
-          profile: minimal
-      - run: |
+        # use the msys2 shell (default from `defaults` above)
+        run: |
           # ensure pkg-config finds ucrt64 pkgconfig files
           export PKG_CONFIG_PATH="/ucrt64/lib/pkgconfig:/usr/lib/pkgconfig:$PKG_CONFIG_PATH"
 
