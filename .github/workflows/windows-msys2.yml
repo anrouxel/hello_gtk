@@ -39,9 +39,9 @@ jobs:
           pkg-config --cflags --libs gtk4 || true
           pkg-config --modversion libadwaita || true
           pkg-config --cflags --libs libadwaita || true
-      - name: Check library files
+      - name: Find adwaita-1.lib
         run: |
-          ls -la /usr/lib/adwaita-1.lib || true
+          find / -name 'adwaita-1.lib' 2>/dev/null
       - name: Cache cargo registry & target
         uses: actions/cache@v4
         with:
@@ -55,7 +55,7 @@ jobs:
       - name: Build (release)
         run: |
           export PATH=$PATH:/c/Users/runneradmin/.cargo/bin
-          export LIBRARY_PATH=$LIBRARY_PATH:/usr/lib
+          export LIBRARY_PATH=$LIBRARY_PATH:/usr/lib:/usr/local/lib
           rustup default stable
           cargo build --release
       - name: Collect runtime DLLs & package
