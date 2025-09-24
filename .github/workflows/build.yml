@@ -43,6 +43,11 @@ jobs:
       - name: Build (cargo)
         # use the msys2 shell (default from `defaults` above)
         run: |
+          # make rustup/cargo from the Windows install visible in MSYS2
+          # CARGO_HOME is usually %USERPROFILE%\.cargo -> /c/Users/$(whoami)/.cargo
+          export CARGO_HOME="/c/Users/$(whoami)/.cargo"
+          export PATH="$CARGO_HOME/bin:$PATH"
+
           # ensure pkg-config finds ucrt64 pkgconfig files
           export PKG_CONFIG_PATH="/ucrt64/lib/pkgconfig:/usr/lib/pkgconfig:$PKG_CONFIG_PATH"
 
