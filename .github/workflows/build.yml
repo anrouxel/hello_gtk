@@ -1,0 +1,59 @@
+name: Build (Windows, GTK4 + Libadwaita)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build-windows-gtk4:
+    runs-on: windows-latest
+    defaults:
+      run:
+        # use the msys2 shell for subsequent run steps by default
+        shell: msys2 {0}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (GNU)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable-x86_64-pc-windows-gnu
+          profile: minimal
+
+      - name: Setup MSYS2 (UCRT64) and install GTK4 + libadwaita
+        uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          msystem: UCRT64
+          update: true
+          cache: true
+          install: >-
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-gtk4
+            mingw-w64-ucrt-x86_64-libadwaita
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-cairo
+            mingw-w64-ucrt-x86_64-pango
+            mingw-w64-ucrt-x86_64-gdk-pixbuf2
+            mingw-w64-ucrt-x86_64-glib2
+
+      - name: Build (cargo)
+        # use the msys2 shell (default from `defaults` above)
+        run: |
+          # ensure pkg-config finds ucrt64 pkgconfig files
+          export PKG_CONFIG_PATH="/ucrt64/lib/pkgconfig:/usr/lib/pkgconfig:$PKG_CONFIG_PATH"
+
+          # optional: ensure rustup toolchain visible inside MSYS2
+          rustup default stable-x86_64-pc-windows-gnu || true
+
+          # build release
+          cargo build --release
+
+      - name: Collect artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-gtk4-binary
+          path: target/release/*.exe
