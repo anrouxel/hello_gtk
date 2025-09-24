@@ -39,7 +39,7 @@ jobs:
         with:
           toolchain: stable-x86_64-pc-windows-gnu
           profile: minimal
-        run: |
+      - run: |
           # ensure pkg-config finds ucrt64 pkgconfig files
           export PKG_CONFIG_PATH="/ucrt64/lib/pkgconfig:/usr/lib/pkgconfig:$PKG_CONFIG_PATH"
 
