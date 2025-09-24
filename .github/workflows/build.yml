@@ -61,4 +61,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-gtk4-binary
-          path: target/release/*.exe
+          path: target/release/*
