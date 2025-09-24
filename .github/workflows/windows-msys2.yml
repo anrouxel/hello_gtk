@@ -51,7 +51,6 @@ jobs:
             mingw-w64-x86_64-gst-plugins-ugly
             mingw-w64-x86_64-gst-libav
             mingw-w64-x86_64-gst-rtsp-server
-            desktop-file-utils
             mingw-w64-x86_64-desktop-file-utils
       - name: Show installed gtk pkg-config info
         run: |
