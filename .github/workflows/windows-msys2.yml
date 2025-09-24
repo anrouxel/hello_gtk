@@ -8,24 +8,20 @@ jobs:
     runs-on: windows-latest
     defaults:
       run:
-        # Use the msys2-provided shell helper for later steps
         shell: msys2 {0}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Setup Rust toolchain (GNU)
-        # Use the rust-toolchain action to install rustup + toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
-          # ensure the GNU target is available (if you plan to cross-compile or specifically target it)
           target: x86_64-pc-windows-gnu
           components: rustfmt, clippy
-      - name: Setup MSYS2 and install packages (GTK4)
+      - name: Setup MSYS2 and install packages (GTK4, libadwaita)
         id: msys2
         uses: msys2/setup-msys2@v2
         with:
-          # choose environment (UCRT64 is recommended these days; MINGW64 also works)
           msystem: UCRT64
           update: true
           cache: true
@@ -39,9 +35,10 @@ jobs:
             mingw-w64-ucrt-x86_64-libadwaita
       - name: Show installed gtk pkg-config info
         run: |
-          # verify pkg-config can find glib/gtk
           pkg-config --modversion gtk4 || true
           pkg-config --cflags --libs gtk4 || true
+          pkg-config --modversion libadwaita || true
+          pkg-config --cflags --libs libadwaita || true
       - name: Cache cargo registry & target
         uses: actions/cache@v4
         with:
@@ -53,20 +50,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
       - name: Build (release)
-        # runs under msys2 shell thanks to defaults.shell above
         run: |
-          # Ajoutez le chemin de rustup au PATH
           export PATH=$PATH:/c/Users/runneradmin/.cargo/bin
-          # ensure we're using GNU toolchain (if necessary)
+          export LIBRARY_PATH=$LIBRARY_PATH:/usr/lib
           rustup default stable
-          # If you use specific features or targets, adapt the cargo command
           cargo build --release
       - name: Collect runtime DLLs & package
         run: |
           mkdir -p release_bundle
           cp target/release/*.exe release_bundle/ || true
-          # Copy necessary DLLs from MSYS2 mingw64 bin to bundle so exe runs on a Windows machine
-          # Adjust path if using MINGW64 vs UCRT64:
           cp /usr/bin/*.dll release_bundle/ || true
           ls -la release_bundle
       - name: Upload build artifact
