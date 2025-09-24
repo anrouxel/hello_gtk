@@ -39,6 +39,9 @@ jobs:
           pkg-config --cflags --libs gtk4 || true
           pkg-config --modversion libadwaita || true
           pkg-config --cflags --libs libadwaita || true
+      - name: Check library files
+        run: |
+          ls -la /usr/lib/adwaita-1.lib || true
       - name: Cache cargo registry & target
         uses: actions/cache@v4
         with:
