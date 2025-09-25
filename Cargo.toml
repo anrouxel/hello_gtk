@@ -6,8 +6,10 @@ edition = "2024"
 [dependencies]
 adw = { version = "0.8.0", package = "libadwaita", features = ["v1_7"] }
 discid = "0.5.0"
-discid-sys = { git = "https://github.com/anrouxel/rust-discid-sys.git"}
 gio = "0.21.2"
 glib = "0.21.3"
 gstreamer = "0.24.2"
 gtk = { version = "0.10.1", package = "gtk4", features = ["gnome_48"] }
+
+[patch.crates-io]
+discid-sys = { git = "https://github.com/anrouxel/rust-discid-sys.git", rev="0.5.1" }
