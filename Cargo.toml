@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 adw = { version = "0.8.0", package = "libadwaita", features = ["v1_7"] }
+discid = "0.5.0"
 gio = "0.21.2"
 glib = "0.21.3"
 gstreamer = "0.24.2"

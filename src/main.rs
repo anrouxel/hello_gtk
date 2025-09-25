@@ -1,14 +1,17 @@
 use adw::prelude::*;
-use adw::{ActionRow, Application, ApplicationWindow, HeaderBar, SwitchRow, AboutDialog};
-use gtk::{gio, Button, FileDialog, FileFilter, Box as GtkBox, ListBox, Orientation, SelectionMode};
-use gtk::glib;
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::rc::Rc; // <-- important
+use adw::{AboutDialog, ActionRow, Application, ApplicationWindow, HeaderBar, SwitchRow};
+use discid::{DiscId, Features};
 use glib::{ControlFlow, MainLoop, object::ObjectExt};
 use gstreamer::{
     Element, ElementFactory, MessageView, PadLinkSuccess, Pipeline, State, prelude::*,
 };
+use gtk::glib;
+use gtk::{
+    Box as GtkBox, Button, FileDialog, FileFilter, ListBox, Orientation, SelectionMode, gio,
+};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::rc::Rc; // <-- important
 
 trait AudioEncoder {
     fn new() -> Self;
@@ -53,10 +56,7 @@ fn add_file_to_list(list: &ListBox, path: &Path) {
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string());
 
-    let row = ActionRow::builder()
-        .activatable(true)
-        .title(&title)
-        .build();
+    let row = ActionRow::builder().activatable(true).title(&title).build();
 
     let path_buf = path.to_path_buf();
     row.connect_activated(move |_| {
@@ -117,8 +117,10 @@ fn setup_file_button(
         dlg.set_filters(Some(&filters));
         let parent = parent.clone();
         let cb_inner = cb.clone();
-        dlg.open(Some(&parent), None::<&gio::Cancellable>, move |res: Result<gio::File, glib::Error>| {
-            match res {
+        dlg.open(
+            Some(&parent),
+            None::<&gio::Cancellable>,
+            move |res: Result<gio::File, glib::Error>| match res {
                 Ok(gfile) => {
                     if let Some(path) = gfile.path() {
                         eprintln!("Fichier audio choisi : {}", path.display());
@@ -128,8 +130,8 @@ fn setup_file_button(
                     }
                 }
                 Err(err) => eprintln!("Aucun fichier sélectionné ou erreur: {}", err),
-            }
-        });
+            },
+        );
     });
 }
 
@@ -148,8 +150,10 @@ fn setup_folder_button(
         dlg.set_title("Choisir un dossier");
         let parent = parent.clone();
         let cb_inner = cb.clone();
-        dlg.select_folder(Some(&parent), None::<&gio::Cancellable>, move |res: Result<gio::File, glib::Error>| {
-            match res {
+        dlg.select_folder(
+            Some(&parent),
+            None::<&gio::Cancellable>,
+            move |res: Result<gio::File, glib::Error>| match res {
                 Ok(gfile) => {
                     if let Some(path) = gfile.path() {
                         eprintln!("Dossier choisi : {}", path.display());
@@ -159,8 +163,8 @@ fn setup_folder_button(
                     }
                 }
                 Err(err) => eprintln!("Annulé / erreur sélection dossier: {}", err),
-            }
-        });
+            },
+        );
     });
 }
 
@@ -168,6 +172,13 @@ fn main() {
     gstreamer::init().unwrap();
     let version = gstreamer::version_string();
     println!("{}", version);
+
+    let disc = DiscId::read_features(None, Features::ISRC).expect("Reading disc failed");
+    println!("Disc ID: {}", disc.id());
+
+    for track in disc.tracks() {
+        println!("Track #{} ISRC: {}", track.number, track.isrc);
+    }
 
     let pipeline = Pipeline::new();
     let source = ElementFactory::make_with_name("filesrc", Some("src")).unwrap();
@@ -267,7 +278,7 @@ fn main() {
         .set_state(State::Null)
         .expect("Failed to set pipeline to Null state");
     println!("Done.");
-    
+
     let application = Application::builder()
         .application_id("com.example.FirstAdwaitaApp")
         .build();
@@ -275,7 +286,8 @@ fn main() {
     application.connect_activate(|app| {
         // --- boutons ---
         let convert_btn = create_label_button("Convertir");
-        let file_btn = create_icon_button("document-open-symbolic", Some("Choisir un fichier audio"));
+        let file_btn =
+            create_icon_button("document-open-symbolic", Some("Choisir un fichier audio"));
         let folder_btn = create_icon_button("folder-symbolic", Some("Choisir un dossier"));
         let prefs_btn = create_icon_button("preferences-system-symbolic", Some("Préférences"));
         let about_btn = create_icon_button("help-about-symbolic", Some("À propos"));
@@ -289,7 +301,10 @@ fn main() {
         header.pack_end(&about_btn);
 
         // --- contenu (LISTE sans CSS personnalisé) ---
-        let example_row = ActionRow::builder().activatable(true).title("Click me").build();
+        let example_row = ActionRow::builder()
+            .activatable(true)
+            .title("Click me")
+            .build();
         example_row.connect_activated(|_| eprintln!("Clicked!"));
 
         let switch = SwitchRow::new();
