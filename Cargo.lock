@@ -121,7 +121,7 @@ dependencies = [
 [[package]]
 name = "discid-sys"
 version = "0.5.0"
-source = "git+https://github.com/anrouxel/rust-discid-sys.git?rev=0.5.1#a6a2bda1f4286422a4f9521326067cd1d1176bc3"
+source = "git+https://github.com/anrouxel/rust-discid-sys.git?rev=0.5.2#363d20bc6c3715a667743c4eec8c4f34eb62cd99"
 dependencies = [
  "bindgen",
 ]
