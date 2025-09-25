@@ -23,7 +23,7 @@ version = "0.72.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "993776b509cfb49c750f11b8f07a46fa23e0a1386ffc01fb1e7d343efc387895"
 dependencies = [
- "bitflags 2.9.4",
+ "bitflags",
  "cexpr",
  "clang-sys",
  "itertools 0.13.0",
@@ -39,12 +39,6 @@ dependencies = [
 
 [[package]]
 name = "bitflags"
-version = "1.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
-
-[[package]]
-name = "bitflags"
 version = "2.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2261d10cca569e4643e526d8dc2e62e433cc8aba21ab764233731f8d369bf394"
@@ -55,7 +49,7 @@ version = "0.21.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfe4354df4da648870e363387679081f8f9fc538ec8b55901e3740c6a0ef81b1"
 dependencies = [
- "bitflags 2.9.4",
+ "bitflags",
  "cairo-sys-rs",
  "glib",
  "libc",
@@ -111,10 +105,9 @@ dependencies = [
 [[package]]
 name = "discid"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05f36ab1fb49d5ebe6f56fa1e2a2cd47cf6853e203621c808f5f175e1c7a54b0"
+source = "git+https://github.com/anrouxel/rust-discid.git?rev=0.5.2#79af89ed99ae39d46409ea821dbd06bc19c543e9"
 dependencies = [
- "bitflags 1.3.2",
+ "bitflags",
  "discid-sys",
 ]
 
@@ -304,7 +297,7 @@ version = "0.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e1f2cbc4577536c849335878552f42086bfd25a8dcd6f54a18655cf818b20c8f"
 dependencies = [
- "bitflags 2.9.4",
+ "bitflags",
  "futures-channel",
  "futures-core",
  "futures-executor",
