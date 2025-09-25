@@ -41,6 +41,7 @@ jobs:
             mingw-w64-ucrt-x86_64-glib2
             mingw-w64-ucrt-x86_64-gstreamer
             mingw-w64-ucrt-x86_64-libdiscid
+            mingw-w64-ucrt-x86_64-clang
 
       - name: Build (cargo)
         # use the msys2 shell (default from `defaults` above)
