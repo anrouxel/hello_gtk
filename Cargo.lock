@@ -105,7 +105,7 @@ dependencies = [
 [[package]]
 name = "discid"
 version = "0.5.0"
-source = "git+https://github.com/anrouxel/rust-discid.git?rev=0.5.4#6f1e1fb8ba4a1ad3d0a4b6de8bae602b25b15e80"
+source = "git+https://github.com/anrouxel/rust-discid.git?rev=0.5.5#e7f8770c9d4c50743d9b6257a88716a98e5862ba"
 dependencies = [
  "bitflags",
  "discid-sys",
