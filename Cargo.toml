@@ -13,4 +13,4 @@ gtk = { version = "0.10.1", package = "gtk4", features = ["gnome_48"] }
 
 [patch.crates-io]
 discid-sys = { git = "https://github.com/anrouxel/rust-discid-sys.git", rev="0.5.2" }
-discid = { git = "https://github.com/anrouxel/rust-discid.git", rev="0.5.3" }
+discid = { git = "https://github.com/anrouxel/rust-discid.git", rev="0.5.4" }
