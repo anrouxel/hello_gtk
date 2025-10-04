@@ -1,10 +1,10 @@
 use adw::prelude::*;
-use adw::{ActionRow, Application, ApplicationWindow, HeaderBar, SwitchRow, AboutDialog};
-use gtk::{gio, Button, FileDialog, FileFilter, Box as GtkBox, ListBox, Orientation, SelectionMode};
-use gtk::glib;
+use adw::{ActionRow, AboutDialog, ApplicationWindow};
+use gtk::{gio, glib, FileDialog, FileFilter, ListBox, SelectionMode, Orientation};
+use std::cell::RefCell;
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::rc::Rc; // <-- important
+use std::path::PathBuf;
+use std::rc::Rc;
 
 fn is_audio_extension(ext: &str) -> bool {
     matches!(
@@ -13,219 +13,243 @@ fn is_audio_extension(ext: &str) -> bool {
     )
 }
 
-fn add_file_to_list(list: &ListBox, path: &Path) {
+fn create_audio_row(path: PathBuf) -> ActionRow {
+    let row = ActionRow::new();
+    row.set_activatable(true);
+    
     let title = path
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string());
-
-    let row = ActionRow::builder()
-        .activatable(true)
-        .title(&title)
-        .build();
-
-    let path_buf = path.to_path_buf();
+    
+    row.set_title(&title);
+    
+    let path_clone = path.clone();
     row.connect_activated(move |_| {
-        eprintln!("Ligne activée : {}", path_buf.display());
+        eprintln!("Ligne activée : {}", path_clone.display());
     });
-
-    list.append(&row);
+    
+    row
 }
 
-/// Parcourt `folder` et ajoute à `list` tous les fichiers dont l'extension
-/// est reconnue comme audio.
-fn scan_folder_and_add_audio(list: &ListBox, folder: &Path) {
-    if let Ok(entries) = fs::read_dir(folder) {
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if p.is_file() {
-                if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
-                    if is_audio_extension(ext) {
-                        add_file_to_list(list, &p);
-                    }
-                }
-            }
-        }
-    } else {
-        eprintln!("Impossible de lire le dossier: {}", folder.display());
-    }
-}
-
-/// Création d'un bouton icône avec tooltip optionnel
-fn create_icon_button(icon_name: &str, tooltip: Option<&str>) -> Button {
-    let btn = Button::builder().icon_name(icon_name).build();
-    if let Some(t) = tooltip {
-        btn.set_tooltip_text(Some(t));
-    }
-    btn
-}
-
-/// Création d'un bouton avec label
-fn create_label_button(label: &str) -> Button {
-    Button::builder().label(label).build()
-}
-
-/// Configure un bouton pour ouvrir un dialogue qui renvoie un fichier.
-/// `on_file_selected` est un Rc<dyn Fn(PathBuf)> clonable.
-fn setup_file_button(
-    file_btn: &Button,
-    parent: &ApplicationWindow,
-    filters_model: &gio::ListStore,
-    on_file_selected: Rc<dyn Fn(PathBuf)>,
-) {
-    let parent = parent.clone();
-    let filters = filters_model.clone();
-    let cb = on_file_selected.clone();
-
-    file_btn.connect_clicked(move |_| {
-        let dlg = FileDialog::new();
-        dlg.set_title("Ouvrir un fichier audio");
-        dlg.set_filters(Some(&filters));
-        let parent = parent.clone();
-        let cb_inner = cb.clone();
-        dlg.open(Some(&parent), None::<&gio::Cancellable>, move |res: Result<gio::File, glib::Error>| {
-            match res {
-                Ok(gfile) => {
-                    if let Some(path) = gfile.path() {
-                        eprintln!("Fichier audio choisi : {}", path.display());
-                        (cb_inner)(path);
-                    } else {
-                        eprintln!("Fichier choisi (pas de path) : {:?}", gfile);
-                    }
-                }
-                Err(err) => eprintln!("Aucun fichier sélectionné ou erreur: {}", err),
-            }
-        });
-    });
-}
-
-/// Configure un bouton pour sélectionner un dossier.
-/// `on_folder_selected` est un Rc<dyn Fn(PathBuf)> clonable.
-fn setup_folder_button(
-    folder_btn: &Button,
-    parent: &ApplicationWindow,
-    on_folder_selected: Rc<dyn Fn(PathBuf)>,
-) {
-    let parent = parent.clone();
-    let cb = on_folder_selected.clone();
-
-    folder_btn.connect_clicked(move |_| {
-        let dlg = FileDialog::new();
-        dlg.set_title("Choisir un dossier");
-        let parent = parent.clone();
-        let cb_inner = cb.clone();
-        dlg.select_folder(Some(&parent), None::<&gio::Cancellable>, move |res: Result<gio::File, glib::Error>| {
-            match res {
-                Ok(gfile) => {
-                    if let Some(path) = gfile.path() {
-                        eprintln!("Dossier choisi : {}", path.display());
-                        (cb_inner)(path);
-                    } else {
-                        eprintln!("Dossier choisi (pas de path) : {:?}", gfile);
-                    }
-                }
-                Err(err) => eprintln!("Annulé / erreur sélection dossier: {}", err),
-            }
-        });
-    });
-}
-
-fn main() {
-    adw::init().expect("Failed to init adw");
-
-    let application = Application::builder()
-        .application_id("com.example.FirstAdwaitaApp")
+fn build_ui(app: &adw::Application) {
+    // Liste des fichiers audio
+    let audio_files: Rc<RefCell<Vec<PathBuf>>> = Rc::new(RefCell::new(Vec::new()));
+    
+    // Création de la fenêtre principale
+    let window = ApplicationWindow::builder()
+        .application(app)
+        .default_width(700)
+        .default_height(420)
         .build();
-
-    application.connect_activate(|app| {
-        // --- boutons ---
-        let convert_btn = create_label_button("Convertir");
-        let file_btn = create_icon_button("document-open-symbolic", Some("Choisir un fichier audio"));
-        let folder_btn = create_icon_button("folder-symbolic", Some("Choisir un dossier"));
-        let prefs_btn = create_icon_button("preferences-system-symbolic", Some("Préférences"));
-        let about_btn = create_icon_button("help-about-symbolic", Some("À propos"));
-
-        // --- HeaderBar ---
-        let header = HeaderBar::new();
-        header.pack_start(&convert_btn);
-        header.pack_start(&file_btn);
-        header.pack_start(&folder_btn);
-        header.pack_end(&prefs_btn);
-        header.pack_end(&about_btn);
-
-        // --- contenu (LISTE sans CSS personnalisé) ---
-        let example_row = ActionRow::builder().activatable(true).title("Click me").build();
-        example_row.connect_activated(|_| eprintln!("Clicked!"));
-
-        let switch = SwitchRow::new();
-        switch.set_title("Switch me");
-
-        let list = ListBox::builder()
-            .margin_top(16)
-            .margin_end(16)
-            .margin_bottom(16)
-            .margin_start(16)
-            .selection_mode(SelectionMode::None)
-            .css_classes(vec![String::from("boxed-list")])
-            .build();
-
-        let content = GtkBox::new(Orientation::Vertical, 0);
-        content.append(&header);
-        content.append(&list);
-
-        // --- fenêtre ---
-        let window = ApplicationWindow::builder()
-            .application(app)
-            .title("First App")
-            .default_width(700)
-            .default_height(420)
-            .content(&content)
-            .build();
-
-        // --- filtre audio (réutilisable) ---
+    
+    // Container principal
+    let main_box = gtk::Box::new(Orientation::Vertical, 0);
+    
+    // HeaderBar
+    let header = adw::HeaderBar::new();
+    
+    // Bouton Convertir
+    let convert_btn = gtk::Button::builder()
+        .label("Convertir")
+        .tooltip_text("Convertir (Ctrl+R)")
+        .build();
+    
+    // Bouton Ouvrir fichier
+    let open_file_btn = gtk::Button::builder()
+        .icon_name("document-open-symbolic")
+        .tooltip_text("Choisir un fichier audio (Ctrl+O)")
+        .build();
+    
+    // Bouton Ouvrir dossier
+    let open_folder_btn = gtk::Button::builder()
+        .icon_name("folder-symbolic")
+        .tooltip_text("Choisir un dossier (Ctrl+F)")
+        .build();
+    
+    // Bouton À propos
+    let about_btn = gtk::Button::builder()
+        .icon_name("help-about-symbolic")
+        .tooltip_text("À propos")
+        .build();
+    
+    // Bouton Préférences
+    let prefs_btn = gtk::Button::builder()
+        .icon_name("preferences-system-symbolic")
+        .tooltip_text("Préférences")
+        .build();
+    
+    header.pack_start(&convert_btn);
+    header.pack_start(&open_file_btn);
+    header.pack_start(&open_folder_btn);
+    header.pack_end(&about_btn);
+    header.pack_end(&prefs_btn);
+    
+    // Liste des fichiers
+    let file_list = ListBox::new();
+    file_list.set_margin_top(16);
+    file_list.set_margin_bottom(16);
+    file_list.set_margin_start(16);
+    file_list.set_margin_end(16);
+    file_list.set_selection_mode(SelectionMode::None);
+    file_list.add_css_class("boxed-list");
+    
+    let scrolled = gtk::ScrolledWindow::builder()
+        .vexpand(true)
+        .hexpand(true)
+        .child(&file_list)
+        .build();
+    
+    main_box.append(&header);
+    main_box.append(&scrolled);
+    
+    window.set_content(Some(&main_box));
+    
+    // Callbacks
+    
+    // Convertir
+    let audio_files_clone = audio_files.clone();
+    convert_btn.connect_clicked(move |_| {
+        let files = audio_files_clone.borrow();
+        eprintln!("Conversion lancée pour {} fichiers", files.len());
+        for (idx, file) in files.iter().enumerate() {
+            eprintln!("  {} - {}", idx + 1, file.display());
+        }
+    });
+    
+    // Ouvrir fichier
+    let window_clone = window.clone();
+    let audio_files_clone = audio_files.clone();
+    let file_list_clone = file_list.clone();
+    open_file_btn.connect_clicked(move |_| {
+        let dialog = FileDialog::new();
+        dialog.set_title("Ouvrir un fichier audio");
+        
         let audio_filter = FileFilter::new();
         audio_filter.set_name(Some("Fichiers audio"));
         audio_filter.add_mime_type("audio/*");
-
-        let filters_model = gio::ListStore::new::<FileFilter>();
-        filters_model.append(&audio_filter);
-
-        // --- handlers simplifiés et sans duplication ---
-        {
-            // file button: ajoute 1 fichier choisi à la liste
-            let list_for_file = list.clone();
-            let cb = Rc::new(move |path: PathBuf| {
-                add_file_to_list(&list_for_file, &path);
-            }) as Rc<dyn Fn(PathBuf)>;
-            setup_file_button(&file_btn, &window, &filters_model, cb);
-        }
-
-        {
-            // folder button: scan dossier et ajoute tous les audios
-            let list_for_folder = list.clone();
-            let cb = Rc::new(move |path: PathBuf| {
-                scan_folder_and_add_audio(&list_for_folder, &path);
-            }) as Rc<dyn Fn(PathBuf)>;
-            setup_folder_button(&folder_btn, &window, cb);
-        }
-
-        convert_btn.connect_clicked(|_| eprintln!("Convertir cliqué"));
-        prefs_btn.connect_clicked(|_| eprintln!("Préférences cliqué"));
-
-        {
-            // about dialog
-            let win_for_about = window.clone();
-            about_btn.connect_clicked(move |_| {
-                let about = AboutDialog::new();
-                about.set_application_name("First App");
-                about.set_version("0.1");
-                about.set_comments("Application de conversion audio — exemple");
-                about.present(Some(&win_for_about));
-            });
-        }
-
-        window.present();
+        
+        let filters = gio::ListStore::new::<FileFilter>();
+        filters.append(&audio_filter);
+        dialog.set_filters(Some(&filters));
+        
+        let audio_files_clone2 = audio_files_clone.clone();
+        let file_list_clone2 = file_list_clone.clone();
+        dialog.open(
+            Some(&window_clone),
+            gio::Cancellable::NONE,
+            move |result| {
+                if let Ok(file) = result {
+                    if let Some(path) = file.path() {
+                        eprintln!("Fichier audio choisi : {}", path.display());
+                        audio_files_clone2.borrow_mut().push(path.clone());
+                        let row = create_audio_row(path);
+                        file_list_clone2.append(&row);
+                    }
+                }
+            },
+        );
     });
+    
+    // Ouvrir dossier
+    let window_clone = window.clone();
+    let audio_files_clone = audio_files.clone();
+    let file_list_clone = file_list.clone();
+    open_folder_btn.connect_clicked(move |_| {
+        let dialog = FileDialog::new();
+        dialog.set_title("Choisir un dossier");
+        
+        let audio_files_clone2 = audio_files_clone.clone();
+        let file_list_clone2 = file_list_clone.clone();
+        dialog.select_folder(
+            Some(&window_clone),
+            gio::Cancellable::NONE,
+            move |result| {
+                if let Ok(file) = result {
+                    if let Some(folder) = file.path() {
+                        eprintln!("Dossier choisi : {}", folder.display());
+                        if let Ok(entries) = fs::read_dir(&folder) {
+                            for entry in entries.flatten() {
+                                let p = entry.path();
+                                if p.is_file() {
+                                    if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+                                        if is_audio_extension(ext) {
+                                            audio_files_clone2.borrow_mut().push(p.clone());
+                                            let row = create_audio_row(p);
+                                            file_list_clone2.append(&row);
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            eprintln!("Impossible de lire le dossier: {}", folder.display());
+                        }
+                    }
+                }
+            },
+        );
+    });
+    
+    // Préférences
+    prefs_btn.connect_clicked(move |_| {
+        eprintln!("Préférences cliqué");
+    });
+    
+    // À propos
+    let window_clone = window.clone();
+    about_btn.connect_clicked(move |_| {
+        let about = AboutDialog::new();
+        about.set_application_name("First App");
+        about.set_version("0.1");
+        about.set_comments("Application de conversion audio — exemple avec GTK-RS + Adwaita");
+        about.set_developers(&["Développeur"]);
+        
+        about.present(Some(&window_clone));
+    });
+    
+    // Actions et raccourcis clavier
+    let action_group = gio::SimpleActionGroup::new();
+    
+    // Action ouvrir fichier
+    let open_file_action = gio::SimpleAction::new("open-file", None);
+    let open_file_btn_clone = open_file_btn.clone();
+    open_file_action.connect_activate(move |_, _| {
+        open_file_btn_clone.activate();
+    });
+    action_group.add_action(&open_file_action);
+    
+    // Action ouvrir dossier
+    let open_folder_action = gio::SimpleAction::new("open-folder", None);
+    let open_folder_btn_clone = open_folder_btn.clone();
+    open_folder_action.connect_activate(move |_, _| {
+        open_folder_btn_clone.activate();
+    });
+    action_group.add_action(&open_folder_action);
+    
+    // Action convertir
+    let convert_action = gio::SimpleAction::new("convert", None);
+    let convert_btn_clone = convert_btn.clone();
+    convert_action.connect_activate(move |_, _| {
+        convert_btn_clone.activate();
+    });
+    action_group.add_action(&convert_action);
+    
+    window.insert_action_group("win", Some(&action_group));
+    
+    // Raccourcis clavier
+    app.set_accels_for_action("win.open-file", &["<Ctrl>O"]);
+    app.set_accels_for_action("win.open-folder", &["<Ctrl>F"]);
+    app.set_accels_for_action("win.convert", &["<Ctrl>R"]);
+    
+    window.present();
+}
 
-    application.run();
+fn main() -> glib::ExitCode {
+    let app = adw::Application::builder()
+        .application_id("com.example.FirstAdwaitaApp")
+        .build();
+    
+    app.connect_activate(build_ui);
+    
+    app.run()
 }
