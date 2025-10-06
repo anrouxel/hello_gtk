@@ -1,8 +1,8 @@
 use crate::components::{about_dialog::AboutDialogComponent, file_list::FileList, header_bar::HeaderBar};
 use crate::services::audio_service::AudioService;
 use adw::prelude::*;
-use adw::ApplicationWindow;
-use gtk::{gio, FileDialog, FileFilter, Orientation};
+use adw::{ApplicationWindow, ToolbarView};
+use gtk::{gio, FileDialog, FileFilter};
 
 /// Composant MainWindow
 /// Responsable de l'assemblage de tous les composants et de la gestion des interactions
@@ -28,12 +28,12 @@ impl MainWindow {
         let file_list = FileList::new();
         let audio_service = AudioService::new();
         
-        // Container principal
-        let main_box = gtk::Box::new(Orientation::Vertical, 0);
-        main_box.append(header_bar.widget());
-        main_box.append(file_list.widget());
-        
-        window.set_content(Some(&main_box));
+        // Utilisation de ToolbarView pour la fusion headerbar/contenu
+        let toolbar_view = ToolbarView::new();
+        toolbar_view.add_top_bar(header_bar.widget());
+        toolbar_view.set_content(Some(file_list.widget()));
+                
+        window.set_content(Some(&toolbar_view));
         
         let mut main_window = Self {
             window,
