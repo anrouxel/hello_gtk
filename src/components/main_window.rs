@@ -32,7 +32,7 @@ impl MainWindow {
         let toolbar_view = ToolbarView::new();
         toolbar_view.add_top_bar(header_bar.widget());
         toolbar_view.set_content(Some(file_list.widget()));
-                
+
         window.set_content(Some(&toolbar_view));
         
         let mut main_window = Self {
