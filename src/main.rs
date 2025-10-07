@@ -1,22 +1,30 @@
-mod components;
-mod models;
-mod services;
+use adw::{prelude::AdwWindowExt, Application, HeaderBar, ToolbarView, Window};
+use gio::prelude::{ApplicationExt, ApplicationExtManual};
+use gtk::prelude::GtkWindowExt;
 
-use crate::components::main_window::MainWindow;
-use adw::prelude::*;
-use gtk::glib;
-
-fn build_ui(app: &adw::Application) {
-    let window = MainWindow::new(app);
-    window.present();
-}
 
 fn main() -> glib::ExitCode {
-    let app = adw::Application::builder()
-        .application_id("com.example.FirstAdwaitaApp")
+    let app = Application::builder()
+        .application_id("eu.anrouxel.astrid")
         .build();
-    
-    app.connect_activate(build_ui);
-    
+
+    app.connect_activate(|app| {
+        let window = Window::builder()
+            .application(app)
+            .title("Astrid")
+            .default_width(800)
+            .default_height(600)
+            .build();
+
+
+        let headerbar = HeaderBar::builder().build();
+
+        let toolbarview = ToolbarView::builder().build();
+        toolbarview.set_title_widget(Some(&headerbar));
+        window.set_content(Some(&toolbarview));
+
+        window.present();
+    });
+
     app.run()
 }
