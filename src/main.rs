@@ -1,6 +1,6 @@
 use adw::{prelude::AdwWindowExt, Application, HeaderBar, ToolbarView, Window};
 use gio::prelude::{ApplicationExt, ApplicationExtManual};
-use gtk::prelude::GtkWindowExt;
+use gtk::{prelude::GtkWindowExt, Box};
 
 
 fn main() -> glib::ExitCode {
@@ -16,11 +16,13 @@ fn main() -> glib::ExitCode {
             .default_height(600)
             .build();
 
+        let content = Box::builder().build();
 
         let headerbar = HeaderBar::builder().build();
 
         let toolbarview = ToolbarView::builder().build();
-        toolbarview.set_title_widget(Some(&headerbar));
+        toolbarview.add_top_bar(&headerbar);
+        toolbarview.set_content(Some(&content));
         window.set_content(Some(&toolbarview));
 
         window.present();
