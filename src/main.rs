@@ -1,7 +1,8 @@
-use adw::{prelude::*, Application, HeaderBar, NavigationPage, NavigationView, ToolbarView, Window};
+use adw::{prelude::*, ActionRow, Application, HeaderBar, NavigationPage, NavigationView, ToolbarView, Window};
 use gtk::{Box, Button, Image, Label, ListBox, ProgressBar};
 
 fn main() -> glib::ExitCode {
+
     let app = Application::builder()
         .application_id("eu.anrouxel.astrid")
         .build();
@@ -38,12 +39,26 @@ fn main() -> glib::ExitCode {
         cd_image.set_halign(gtk::Align::Center);
         welcome_page.append(&cd_image);
         
-        let welcome_title = Label::builder()
-            .label("Welcome to Sound Juicer")
+        let title_box = Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(0) // Supprimer l'espacement supplémentaire
             .halign(gtk::Align::Center)
             .build();
-        welcome_title.add_css_class("title-1");
-        welcome_page.append(&welcome_title);
+        
+        let welcome_title_part1 = Label::builder()
+            .label("Welcome to ")
+            .build();
+        welcome_title_part1.add_css_class("title-1");
+        
+        let welcome_title_part2 = Label::builder()
+            .label("Astrid")
+            .build();
+        welcome_title_part2.add_css_class("title-1");
+        welcome_title_part2.add_css_class("accent");
+        
+        title_box.append(&welcome_title_part1);
+        title_box.append(&welcome_title_part2);
+        welcome_page.append(&title_box);
         
         let welcome_subtitle = Label::builder()
             .label("Select a device or open a disk image file to get started.")
@@ -102,6 +117,7 @@ fn main() -> glib::ExitCode {
         let list_box = ListBox::builder()
             .selection_mode(gtk::SelectionMode::None)
             .build();
+        list_box.add_css_class("boxed-list");
         
         let tracks = vec![
             "State of Grace (Taylor's Version) - 4:55",
@@ -112,11 +128,11 @@ fn main() -> glib::ExitCode {
         ];
         
         for track in tracks {
-            let label = Label::builder()
-                .label(track)
+            let row = ActionRow::builder()
+                .title(track)
                 .halign(gtk::Align::Start)
                 .build();
-            list_box.append(&label);
+            list_box.append(&row);
         }
         
         tracks_page.append(&list_box);
