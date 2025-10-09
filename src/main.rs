@@ -1,4 +1,4 @@
-use adw::{prelude::*, ActionRow, Application, HeaderBar, NavigationPage, NavigationView, ToolbarView, Window};
+use adw::{prelude::*, AboutDialog, ActionRow, Application, HeaderBar, NavigationPage, NavigationView, ToolbarView, Window};
 use gtk::{Box, Button, Image, Label, ListBox, ProgressBar};
 
 fn main() -> glib::ExitCode {
@@ -16,6 +16,31 @@ fn main() -> glib::ExitCode {
             .build();
         
         let headerbar = HeaderBar::builder().build();
+
+        let about_button = Button::from_icon_name("help-about-symbolic");
+        about_button.set_tooltip_text(Some("About Astrid"));
+
+        let parent = window.clone();
+        about_button.connect_clicked(move |_| {
+            let about = AboutDialog::builder()
+                .application_name("Astrid")
+                .version("0.1")
+                .license_type(gtk::License::Gpl30)
+                .website("https://example.com")
+                .application_icon("media-optical")
+                .developers(vec!["Your Name <you@example.com>"])
+                .artists(vec!["Your Name <you@example.com>"])
+                .comments("A simple CD ripping application.")
+                .translator_credits("Translator Name <translator@example.com>")
+                .copyright("© 2024 Your Name")
+                .documenters(vec!["Your Name <you@example.com>"])
+                .release_notes("coucou")
+                .build();
+            about.present(Some(&parent));
+        });
+
+        headerbar.pack_end(&about_button);
+
         let toolbar_view = ToolbarView::builder().build();
         toolbar_view.add_top_bar(&headerbar);
         window.set_content(Some(&toolbar_view));
