@@ -359,6 +359,163 @@ fn list_albums(disc: &DiscId) -> Result<Vec<AlbumDetails>, Box<dyn std::error::E
     Ok(albums)
 }
 
+fn sanitize_filename(name: &str) -> String {
+    name.chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c => c,
+        })
+        .collect()
+}
+
+fn create_output_filename(track: &TrackDetails, album: &AlbumDetails) -> String {
+    let track_num = format!("{:02}", track.number);
+    let title = sanitize_filename(&track.title);
+    let artist = sanitize_filename(track.artist.as_ref().unwrap_or(&"Unknown".to_string()));
+    let album_title = sanitize_filename(&album.title);
+    
+    format!("{} - {} - {} - {}.opus", track_num, artist, album_title, title)
+}
+
+fn transcode_cd_track(
+    _disc: &DiscId,
+    track: &TrackDetails, 
+    album: &AlbumDetails, 
+    output_filename: &str
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("Transcodage de la piste {} : {}", track.number, track.title);
+    
+    let pipeline = Pipeline::new();
+    
+    // Source CD audio
+    let source = ElementFactory::make_with_name("cdparanoiasrc", Some("src")).unwrap();
+    source.set_property("track", track.number as u32);
+    
+    // Pipeline de traitement audio
+    let audiorate = ElementFactory::make("audiorate").build().unwrap();
+    let audioconvert = ElementFactory::make("audioconvert").build().unwrap();
+    let audioresample = ElementFactory::make("audioresample").build().unwrap();
+    
+    // Encodeur Opus
+    let encoder = OpusEncoder::new();
+    
+    // Sink pour le fichier de sortie
+    let sink = ElementFactory::make("filesink").build().unwrap();
+    sink.set_property_from_str("location", output_filename);
+
+    // Ajouter tous les éléments au pipeline
+    pipeline.add_many(&[
+        &source,
+        &audiorate,
+        &audioconvert,
+        &audioresample,
+        encoder.get_encoder(),
+        encoder.get_muxer(),
+        &sink,
+    ])?;
+
+    // Lier les éléments
+    source.link(&audiorate)?;
+    audiorate.link(&audioconvert)?;
+    audioconvert.link(&audioresample)?;
+    audioresample.link(encoder.get_encoder())?;
+    encoder.get_encoder().link(encoder.get_muxer())?;
+    encoder.get_muxer().link(&sink)?;
+
+    // Appliquer les métadonnées
+    apply_metadata_to_pipeline(&pipeline, track, album)?;
+
+    // Créer le bus pour les messages
+    let bus = pipeline.bus().expect("Pipeline without bus");
+    let main_loop = MainLoop::new(None, false);
+    let ml_clone = main_loop.clone();
+    
+    // Cloner les données nécessaires pour le closure
+    let track_number = track.number;
+    
+    let _bus_watch = bus.add_watch(move |_bus, msg| {
+        match msg.view() {
+            MessageView::Eos(_) => {
+                println!("Transcodage terminé pour la piste {}", track_number);
+                ml_clone.quit();
+            }
+            MessageView::Error(err) => {
+                eprintln!("Erreur lors du transcodage: {} ({:?})", err.error(), err.debug());
+                ml_clone.quit();
+            }
+            MessageView::StateChanged(_) => {
+                // Log optionnel des changements d'état
+            }
+            _ => {}
+        }
+        ControlFlow::Continue
+    })?;
+
+    // Démarrer le transcodage
+    pipeline.set_state(State::Playing)?;
+    main_loop.run();
+    pipeline.set_state(State::Null)?;
+    
+    Ok(())
+}
+
+fn apply_metadata_to_pipeline(
+    pipeline: &Pipeline,
+    track: &TrackDetails,
+    album: &AlbumDetails,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gstreamer::tags;
+    
+    let mut tag_list = gstreamer::TagList::new();
+    
+    // Titre de la piste
+    tag_list.get_mut().unwrap().add::<tags::Title>(&track.title.as_str(), gstreamer::TagMergeMode::Replace);
+    
+    // Artiste
+    if let Some(ref artist) = track.artist {
+        tag_list.get_mut().unwrap().add::<tags::Artist>(&artist.as_str(), gstreamer::TagMergeMode::Replace);
+    }
+    
+    // Album
+    tag_list.get_mut().unwrap().add::<tags::Album>(&album.title.as_str(), gstreamer::TagMergeMode::Replace);
+    
+    // Numéro de piste
+    tag_list.get_mut().unwrap().add::<tags::TrackNumber>(&track.number, gstreamer::TagMergeMode::Replace);
+    
+    // Date de sortie (ignorer pour l'instant car le type est complexe)
+    // if let Some(ref date) = album.release_date {
+    //     tag_list.get_mut().unwrap().add::<tags::Date>(date, gstreamer::TagMergeMode::Replace);
+    // }
+    
+    // Envoyer les tags au pipeline
+    let tag_event = gstreamer::event::Tag::new(tag_list);
+    pipeline.send_event(tag_event);
+    
+    Ok(())
+}
+
+fn transcode_all_tracks(disc: &DiscId, album: &AlbumDetails) -> Result<(), Box<dyn std::error::Error>> {
+    std::fs::create_dir_all("output")?;
+    
+    println!("Début du transcodage de l'album : {}", album.title);
+    println!("Nombre de pistes : {}", album.tracks.len());
+    
+    for track in &album.tracks {
+        let filename = format!("output/{}", create_output_filename(track, album));
+        
+        match transcode_cd_track(disc, track, album, &filename) {
+            Ok(()) => {
+                println!("✓ Piste {} transcodée avec succès", track.number);
+            }
+            Err(e) => {
+                eprintln!("✗ Erreur lors du transcodage de la piste {}: {}", track.number, e);
+            }
+        }
+    }
+    
+    Ok(())
+}
+
 fn main() {
     gstreamer::init().unwrap();
     let version = gstreamer::version_string();
@@ -400,111 +557,23 @@ fn main() {
                         }
                     }
                 }
+                
+                // Demander à l'utilisateur de choisir un album
+                if albums.len() == 1 {
+                    println!("\nTranscodage de l'album unique trouvé...");
+                    if let Err(e) = transcode_all_tracks(&disc, &albums[0]) {
+                        eprintln!("Erreur lors du transcodage : {}", e);
+                    }
+                } else {
+                    println!("\nPlusieurs albums trouvés. Transcodage du premier album par défaut...");
+                    if let Err(e) = transcode_all_tracks(&disc, &albums[0]) {
+                        eprintln!("Erreur lors du transcodage : {}", e);
+                    }
+                }
             }
         }
         Err(e) => {
             println!("Error fetching album metadata: {}", e);
         }
     }
-
-
-
-    let pipeline = Pipeline::new();
-    let source = ElementFactory::make_with_name("filesrc", Some("src")).unwrap();
-    source.set_property_from_str("location", "FallingSky.mp3");
-    let decodebin = ElementFactory::make_with_name("decodebin", Some("decoder")).unwrap();
-    let audiorate = ElementFactory::make("audiorate").build().unwrap();
-    let audioconvert = ElementFactory::make("audioconvert").build().unwrap();
-    let audioresample = ElementFactory::make("audioresample").build().unwrap();
-
-    // Choix de l'encodeur avec un énum
-    let encoder = OpusEncoder::new();
-
-    let sink = ElementFactory::make("filesink").build().unwrap();
-    sink.set_property_from_str("location", "FallingSky.opus");
-
-    pipeline
-        .add_many(&[
-            &source,
-            &decodebin,
-            &audiorate,
-            &audioconvert,
-            &audioresample,
-            encoder.get_encoder(),
-            encoder.get_muxer(),
-            &sink,
-        ])
-        .unwrap();
-
-    source.link(&decodebin).unwrap();
-    audiorate.link(&audioconvert).unwrap();
-    audioconvert.link(&audioresample).unwrap();
-    audioresample.link(encoder.get_encoder()).unwrap();
-    encoder.get_encoder().link(encoder.get_muxer()).unwrap();
-    encoder.get_muxer().link(&sink).unwrap();
-
-    let audiorate_clone = audiorate.clone();
-    decodebin.connect_pad_added(move |_dbin, src_pad| {
-        println!("decodebin pad-added: {}", src_pad.name());
-        if let Some(caps) = src_pad.current_caps() {
-            if let Some(structure) = caps.structure(0) {
-                let media_type = structure.name();
-                println!("Pad caps: {}", media_type);
-                if !media_type.starts_with("audio/") && media_type != "audio/x-raw" {
-                    println!("Ignoring non-audio pad: {}", media_type);
-                    return;
-                }
-            }
-        }
-        let sink_pad = audiorate_clone
-            .static_pad("sink")
-            .expect("audiorate has no sink pad");
-        match src_pad.link(&sink_pad) {
-            Ok(PadLinkSuccess) => {
-                println!("Linked decodebin -> audiorate");
-            }
-            Err(err) => {
-                eprintln!("Failed to link decodebin pad to audiorate: {:?}", err);
-            }
-        }
-    });
-
-    let bus = pipeline
-        .bus()
-        .expect("Pipeline without bus — this should not happen");
-    let main_loop = MainLoop::new(None, false);
-    let ml_clone = main_loop.clone();
-    let _bus_watch = bus
-        .add_watch(move |_bus, msg| {
-            match msg.view() {
-                MessageView::Eos(_) => {
-                    println!("EOS received — stopping main loop");
-                    ml_clone.quit();
-                }
-                MessageView::Error(err) => {
-                    let src = err
-                        .src()
-                        .map(|s| s.path_string())
-                        .unwrap_or_else(|| glib::GString::from("unknown"));
-                    eprintln!("Error from {}: {} ({:?})", src, err.error(), err.debug());
-                    ml_clone.quit();
-                }
-                MessageView::StateChanged(_s) => {
-                    // optional logging
-                }
-                _ => {}
-            }
-            ControlFlow::Continue
-        })
-        .expect("Failed to add bus watch");
-
-    pipeline
-        .set_state(State::Playing)
-        .expect("Unable to set the pipeline to `Playing` state");
-    println!("Running main loop...");
-    main_loop.run();
-    pipeline
-        .set_state(State::Null)
-        .expect("Failed to set pipeline to Null state");
-    println!("Done.");
 }
