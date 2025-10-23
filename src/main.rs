@@ -115,7 +115,6 @@ fn query_musicbrainz_disc(disc_details: &DiscDetails) -> Result<Vec<String>, Box
     
     let result = MBDiscid::fetch()
         .id(&disc_details.id)
-        .with_recordings()
         .execute();
 
     match result {
@@ -261,10 +260,8 @@ fn fill_tracks_from_release(release: &Release, album: &mut AlbumDetails) {
 fn make_album_from_release(release: &Release) -> Option<AlbumDetails> {
     let (artist, artist_sortname, artist_id) = get_artist_info_from_release(release);
 
-    // Conversion simple de la date en string
-    let release_date_str = release.date.as_ref().map(|_date| {
-        // Pour l'instant, on retourne juste une chaîne simple
-        "Unknown Date".to_string()
+    let release_date_str = release.date.as_ref().map(|date| {
+        date.0.clone()
     });
 
     let mut album = AlbumDetails {
