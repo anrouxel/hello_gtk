@@ -14,6 +14,44 @@ use gstreamer::{
 use gstreamer_pbutils::{EncodingAudioProfile, EncodingContainerProfile};
 use gtk::glib;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AudioFormat {
+    Opus,
+    Vorbis,
+    Flac,
+    Mp3,
+    Aac,
+    Wavpack,
+}
+
+impl AudioFormat {
+    fn file_extension(&self) -> &str {
+        match self {
+            AudioFormat::Opus => "opus",
+            AudioFormat::Vorbis => "ogg",
+            AudioFormat::Flac => "flac",
+            AudioFormat::Mp3 => "mp3",
+            AudioFormat::Aac => "m4a",
+            AudioFormat::Wavpack => "wv",
+        }
+    }
+
+    fn name(&self) -> &str {
+        match self {
+            AudioFormat::Opus => "Opus",
+            AudioFormat::Vorbis => "Ogg Vorbis",
+            AudioFormat::Flac => "FLAC",
+            AudioFormat::Mp3 => "MP3",
+            AudioFormat::Aac => "AAC",
+            AudioFormat::Wavpack => "WavPack",
+        }
+    }
+
+    fn is_lossless(&self) -> bool {
+        matches!(self, AudioFormat::Flac | AudioFormat::Wavpack)
+    }
+}
+
 #[derive(Debug, Clone)]
 struct DiscDetails {
     id: String,
@@ -339,41 +377,92 @@ fn sanitize_filename(name: &str) -> String {
         .collect()
 }
 
-fn create_opus_encoding_profile() -> EncodingContainerProfile {
-    // Créer le profil audio pour Opus
-    let opus_caps = gstreamer::Caps::builder("audio/x-opus")
-        .build();
-    
-    let audio_profile = EncodingAudioProfile::builder(&opus_caps)
-        .build();
-    
-    // Créer le profil de conteneur Ogg
-    let ogg_caps = gstreamer::Caps::builder("application/ogg")
-        .build();
-    
-    let container_profile = EncodingContainerProfile::builder(&ogg_caps)
-        .add_profile(audio_profile)
-        .build();
-    
-    container_profile
+fn create_encoding_profile(format: AudioFormat) -> EncodingContainerProfile {
+    match format {
+        AudioFormat::Opus => {
+            let opus_caps = gstreamer::Caps::builder("audio/x-opus").build();
+            let audio_profile = EncodingAudioProfile::builder(&opus_caps).build();
+            
+            let ogg_caps = gstreamer::Caps::builder("application/ogg").build();
+            EncodingContainerProfile::builder(&ogg_caps)
+                .add_profile(audio_profile)
+                .build()
+        }
+        AudioFormat::Vorbis => {
+            let vorbis_caps = gstreamer::Caps::builder("audio/x-vorbis").build();
+            let audio_profile = EncodingAudioProfile::builder(&vorbis_caps).build();
+            
+            let ogg_caps = gstreamer::Caps::builder("application/ogg").build();
+            EncodingContainerProfile::builder(&ogg_caps)
+                .add_profile(audio_profile)
+                .build()
+        }
+        AudioFormat::Flac => {
+            let flac_caps = gstreamer::Caps::builder("audio/x-flac").build();
+            let audio_profile = EncodingAudioProfile::builder(&flac_caps).build();
+            
+            // FLAC peut être dans un conteneur Ogg ou autonome
+            let flac_container_caps = gstreamer::Caps::builder("audio/x-flac").build();
+            EncodingContainerProfile::builder(&flac_container_caps)
+                .add_profile(audio_profile)
+                .build()
+        }
+        AudioFormat::Mp3 => {
+            // Pour MP3, on utilise LAME + ID3v2
+            let mp3_caps = gstreamer::Caps::builder("audio/mpeg")
+                .field("mpegversion", 1)
+                .field("layer", 3)
+                .build();
+            let audio_profile = EncodingAudioProfile::builder(&mp3_caps).build();
+            
+            let id3_caps = gstreamer::Caps::builder("application/x-id3").build();
+            EncodingContainerProfile::builder(&id3_caps)
+                .add_profile(audio_profile)
+                .build()
+        }
+        AudioFormat::Aac => {
+            let aac_caps = gstreamer::Caps::builder("audio/mpeg")
+                .field("mpegversion", 4)
+                .build();
+            let audio_profile = EncodingAudioProfile::builder(&aac_caps).build();
+            
+            let mp4_caps = gstreamer::Caps::builder("video/quicktime")
+                .field("variant", "iso")
+                .build();
+            EncodingContainerProfile::builder(&mp4_caps)
+                .add_profile(audio_profile)
+                .build()
+        }
+        AudioFormat::Wavpack => {
+            let wavpack_caps = gstreamer::Caps::builder("audio/x-wavpack").build();
+            let audio_profile = EncodingAudioProfile::builder(&wavpack_caps).build();
+            
+            let wv_caps = gstreamer::Caps::builder("audio/x-wavpack").build();
+            EncodingContainerProfile::builder(&wv_caps)
+                .add_profile(audio_profile)
+                .build()
+        }
+    }
 }
 
-fn create_output_filename(track: &TrackDetails, album: &AlbumDetails) -> String {
+fn create_output_filename(track: &TrackDetails, album: &AlbumDetails, format: AudioFormat) -> String {
     let track_num = format!("{:02}", track.number);
     let title = sanitize_filename(&track.title);
     let artist = sanitize_filename(track.artist.as_ref().unwrap_or(&"Unknown".to_string()));
     let album_title = sanitize_filename(&album.title);
+    let extension = format.file_extension();
     
-    format!("{} - {} - {} - {}.opus", track_num, artist, album_title, title)
+    format!("{} - {} - {} - {}.{}", track_num, artist, album_title, title, extension)
 }
 
 fn transcode_cd_track(
     _disc: &DiscId,
     track: &TrackDetails, 
     album: &AlbumDetails, 
-    output_filename: &str
+    output_filename: &str,
+    format: AudioFormat,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    println!("Transcodage de la piste {} : {}", track.number, track.title);
+    println!("Transcodage de la piste {} : {} (format: {})", track.number, track.title, format.name());
     
     let pipeline = Pipeline::new();
     
@@ -386,9 +475,9 @@ fn transcode_cd_track(
     let audioconvert = ElementFactory::make("audioconvert").build().unwrap();
     let audioresample = ElementFactory::make("audioresample").build().unwrap();
     
-    // Créer encodebin avec le profil d'encodage Opus
+    // Créer encodebin avec le profil d'encodage
     let encodebin = ElementFactory::make("encodebin").build().unwrap();
-    let profile = create_opus_encoding_profile();
+    let profile = create_encoding_profile(format);
     encodebin.set_property("profile", &profile);
     
     // Sink pour le fichier de sortie
@@ -411,8 +500,10 @@ fn transcode_cd_track(
     audioconvert.link(&audioresample)?;
     
     // Demander un pad audio à encodebin
-    let audio_pad = encodebin.request_pad_simple("audio_%u").expect("Failed to get audio pad from encodebin");
-    let audioresample_src_pad = audioresample.static_pad("src").expect("Failed to get src pad from audioresample");
+    let audio_pad = encodebin.request_pad_simple("audio_%u")
+        .ok_or_else(|| format!("Impossible de créer un pad audio pour encodebin. Le format {} n'est peut-être pas supporté ou les plugins nécessaires ne sont pas installés.", format.name()))?;
+    let audioresample_src_pad = audioresample.static_pad("src")
+        .ok_or("Impossible d'obtenir le pad source d'audioresample")?;
     audioresample_src_pad.link(&audio_pad)?;
     
     // Lier encodebin au sink
@@ -490,16 +581,17 @@ fn apply_metadata_to_pipeline(
     Ok(())
 }
 
-fn transcode_all_tracks(disc: &DiscId, album: &AlbumDetails) -> Result<(), Box<dyn std::error::Error>> {
+fn transcode_all_tracks(disc: &DiscId, album: &AlbumDetails, format: AudioFormat) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all("output")?;
     
     println!("Début du transcodage de l'album : {}", album.title);
+    println!("Format d'encodage : {}", format.name());
     println!("Nombre de pistes : {}", album.tracks.len());
     
     for track in &album.tracks {
-        let filename = format!("output/{}", create_output_filename(track, album));
+        let filename = format!("output/{}", create_output_filename(track, album, format));
         
-        match transcode_cd_track(disc, track, album, &filename) {
+        match transcode_cd_track(disc, track, album, &filename, format) {
             Ok(()) => {
                 println!("✓ Piste {} transcodée avec succès", track.number);
             }
@@ -512,6 +604,101 @@ fn transcode_all_tracks(disc: &DiscId, album: &AlbumDetails) -> Result<(), Box<d
     Ok(())
 }
 
+fn get_available_formats() -> Vec<AudioFormat> {
+    vec![
+        AudioFormat::Opus,
+        AudioFormat::Vorbis,
+        AudioFormat::Flac,
+        AudioFormat::Mp3,
+        AudioFormat::Aac,
+        AudioFormat::Wavpack,
+    ]
+}
+
+fn check_format_support(format: AudioFormat) -> bool {
+    // Vérifier si encodebin existe
+    let encodebin = match ElementFactory::make("encodebin").build() {
+        Ok(e) => e,
+        Err(_) => {
+            eprintln!("   ⚠ encodebin non disponible pour {}", format.name());
+            return false;
+        }
+    };
+    
+    let profile = create_encoding_profile(format);
+    encodebin.set_property("profile", &profile);
+    
+    // Essayer de demander un pad audio
+    let pad = encodebin.request_pad_simple("audio_%u");
+    let supported = pad.is_some();
+    
+    if !supported {
+        eprintln!("   ✗ {} - plugins manquants", format.name());
+    }
+    
+    // Nettoyer
+    if let Some(pad) = pad {
+        encodebin.release_request_pad(&pad);
+    }
+    
+    supported
+}
+
+fn get_supported_formats() -> Vec<AudioFormat> {
+    get_available_formats()
+        .into_iter()
+        .filter(|&format| check_format_support(format))
+        .collect()
+}
+
+fn select_format() -> AudioFormat {
+    use std::io::{self, Write};
+    
+    println!("\n=== Sélection du format d'encodage ===");
+    println!("Vérification des formats supportés...");
+    
+    let formats = get_supported_formats();
+    
+    if formats.is_empty() {
+        eprintln!("❌ Aucun format d'encodage supporté trouvé !");
+        eprintln!("Veuillez installer les plugins GStreamer nécessaires.");
+        std::process::exit(1);
+    }
+    
+    println!("\nFormats disponibles :");
+    for (i, format) in formats.iter().enumerate() {
+        let lossless = if format.is_lossless() { " (sans perte)" } else { "" };
+        println!("{}. {}{}", i + 1, format.name(), lossless);
+    }
+    
+    loop {
+        print!("\nChoisissez un format (1-{}) [défaut: 1]: ", formats.len());
+        io::stdout().flush().unwrap();
+        
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).unwrap();
+        let input = input.trim();
+        
+        // Si l'utilisateur appuie juste sur Entrée, utiliser le format par défaut
+        if input.is_empty() {
+            println!("Format sélectionné : {}", formats[0].name());
+            return formats[0];
+        }
+        
+        // Essayer de parser le choix de l'utilisateur
+        match input.parse::<usize>() {
+            Ok(choice) if choice >= 1 && choice <= formats.len() => {
+                let selected = formats[choice - 1];
+                println!("Format sélectionné : {}", selected.name());
+                return selected;
+            }
+            _ => {
+                println!("❌ Choix invalide. Veuillez entrer un nombre entre 1 et {}", formats.len());
+            }
+        }
+    }
+}
+
 fn main() {
     gstreamer::init().unwrap();
     let version = gstreamer::version_string();
@@ -520,6 +707,9 @@ fn main() {
     let disc = DiscId::read_features(None, Features::all()).expect("Reading disc failed");
 
     print_disc_info(&disc);
+
+    // Sélectionner le format d'encodage
+    let audio_format = select_format();
 
     // Nouvelle logique MusicBrainz simplifiée
     println!("\n=== MusicBrainz Metadata ===");
@@ -554,22 +744,66 @@ fn main() {
                     }
                 }
                 
-                // Demander à l'utilisateur de choisir un album
-                if albums.len() == 1 {
+                // Sélectionner l'album à transcoder
+                let selected_album = if albums.len() == 1 {
                     println!("\nTranscodage de l'album unique trouvé...");
-                    if let Err(e) = transcode_all_tracks(&disc, &albums[0]) {
-                        eprintln!("Erreur lors du transcodage : {}", e);
-                    }
+                    &albums[0]
                 } else {
-                    println!("\nPlusieurs albums trouvés. Transcodage du premier album par défaut...");
-                    if let Err(e) = transcode_all_tracks(&disc, &albums[0]) {
-                        eprintln!("Erreur lors du transcodage : {}", e);
-                    }
+                    println!("\nPlusieurs albums trouvés.");
+                    select_album(&albums)
+                };
+                
+                if let Err(e) = transcode_all_tracks(&disc, selected_album, audio_format) {
+                    eprintln!("Erreur lors du transcodage : {}", e);
                 }
             }
         }
         Err(e) => {
             println!("Error fetching album metadata: {}", e);
+        }
+    }
+}
+
+fn select_album(albums: &[AlbumDetails]) -> &AlbumDetails {
+    use std::io::{self, Write};
+    
+    println!("\n=== Sélection de l'album ===");
+    for (i, album) in albums.iter().enumerate() {
+        print!("{}. {} - {}", i + 1, album.title, 
+               album.artist.as_ref().unwrap_or(&"Unknown Artist".to_string()));
+        if let Some(ref date) = album.release_date {
+            print!(" ({})", date);
+        }
+        if let Some(ref country) = album.country {
+            print!(" [{}]", country);
+        }
+        println!();
+    }
+    
+    loop {
+        print!("\nChoisissez un album (1-{}) [défaut: 1]: ", albums.len());
+        io::stdout().flush().unwrap();
+        
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).unwrap();
+        let input = input.trim();
+        
+        // Si l'utilisateur appuie juste sur Entrée, utiliser le premier album
+        if input.is_empty() {
+            println!("Album sélectionné : {}", albums[0].title);
+            return &albums[0];
+        }
+        
+        // Essayer de parser le choix de l'utilisateur
+        match input.parse::<usize>() {
+            Ok(choice) if choice >= 1 && choice <= albums.len() => {
+                let selected = &albums[choice - 1];
+                println!("Album sélectionné : {}", selected.title);
+                return selected;
+            }
+            _ => {
+                println!("❌ Choix invalide. Veuillez entrer un nombre entre 1 et {}", albums.len());
+            }
         }
     }
 }
