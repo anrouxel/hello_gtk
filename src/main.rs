@@ -12,7 +12,6 @@ use gstreamer::{
     ElementFactory, MessageView, Pipeline, State, prelude::*,
 };
 use gstreamer_pbutils::{EncodingAudioProfile, EncodingContainerProfile};
-use gtk::glib;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AudioFormat {
