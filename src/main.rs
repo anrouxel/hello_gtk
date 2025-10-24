@@ -9,39 +9,10 @@ use musicbrainz_rs::{
 
 use glib::{ControlFlow, MainLoop, object::ObjectExt};
 use gstreamer::{
-    Element, ElementFactory, MessageView, PadLinkSuccess, Pipeline, State, prelude::*,
+    ElementFactory, MessageView, Pipeline, State, prelude::*,
 };
+use gstreamer_pbutils::{EncodingAudioProfile, EncodingContainerProfile};
 use gtk::glib;
-
-trait AudioEncoder {
-    fn new() -> Self;
-    fn get_encoder(&self) -> &Element;
-    fn get_muxer(&self) -> &Element;
-}
-
-struct OpusEncoder {
-    encoder: Element,
-    muxer: Element,
-}
-
-impl AudioEncoder for OpusEncoder {
-    fn new() -> Self {
-        let encoder = ElementFactory::make("opusenc").build().unwrap();
-        encoder.set_property("bitrate", &(100_i32 * 1000_i32));
-        encoder.set_property_from_str("bitrate-type", "vbr");
-        encoder.set_property_from_str("bandwidth", "auto");
-        let muxer = ElementFactory::make("oggmux").build().unwrap();
-        OpusEncoder { encoder, muxer }
-    }
-
-    fn get_encoder(&self) -> &Element {
-        &self.encoder
-    }
-
-    fn get_muxer(&self) -> &Element {
-        &self.muxer
-    }
-}
 
 #[derive(Debug, Clone)]
 struct DiscDetails {
@@ -368,6 +339,25 @@ fn sanitize_filename(name: &str) -> String {
         .collect()
 }
 
+fn create_opus_encoding_profile() -> EncodingContainerProfile {
+    // Créer le profil audio pour Opus
+    let opus_caps = gstreamer::Caps::builder("audio/x-opus")
+        .build();
+    
+    let audio_profile = EncodingAudioProfile::builder(&opus_caps)
+        .build();
+    
+    // Créer le profil de conteneur Ogg
+    let ogg_caps = gstreamer::Caps::builder("application/ogg")
+        .build();
+    
+    let container_profile = EncodingContainerProfile::builder(&ogg_caps)
+        .add_profile(audio_profile)
+        .build();
+    
+    container_profile
+}
+
 fn create_output_filename(track: &TrackDetails, album: &AlbumDetails) -> String {
     let track_num = format!("{:02}", track.number);
     let title = sanitize_filename(&track.title);
@@ -396,8 +386,10 @@ fn transcode_cd_track(
     let audioconvert = ElementFactory::make("audioconvert").build().unwrap();
     let audioresample = ElementFactory::make("audioresample").build().unwrap();
     
-    // Encodeur Opus
-    let encoder = OpusEncoder::new();
+    // Créer encodebin avec le profil d'encodage Opus
+    let encodebin = ElementFactory::make("encodebin").build().unwrap();
+    let profile = create_opus_encoding_profile();
+    encodebin.set_property("profile", &profile);
     
     // Sink pour le fichier de sortie
     let sink = ElementFactory::make("filesink").build().unwrap();
@@ -409,18 +401,22 @@ fn transcode_cd_track(
         &audiorate,
         &audioconvert,
         &audioresample,
-        encoder.get_encoder(),
-        encoder.get_muxer(),
+        &encodebin,
         &sink,
     ])?;
 
-    // Lier les éléments
+    // Lier les éléments (encodebin sera lié dynamiquement)
     source.link(&audiorate)?;
     audiorate.link(&audioconvert)?;
     audioconvert.link(&audioresample)?;
-    audioresample.link(encoder.get_encoder())?;
-    encoder.get_encoder().link(encoder.get_muxer())?;
-    encoder.get_muxer().link(&sink)?;
+    
+    // Demander un pad audio à encodebin
+    let audio_pad = encodebin.request_pad_simple("audio_%u").expect("Failed to get audio pad from encodebin");
+    let audioresample_src_pad = audioresample.static_pad("src").expect("Failed to get src pad from audioresample");
+    audioresample_src_pad.link(&audio_pad)?;
+    
+    // Lier encodebin au sink
+    encodebin.link(&sink)?;
 
     // Appliquer les métadonnées
     apply_metadata_to_pipeline(&pipeline, track, album)?;

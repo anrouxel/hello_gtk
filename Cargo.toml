@@ -9,5 +9,6 @@ discid = "0.5.0"
 gio = "0.21.2"
 glib = "0.21.3"
 gstreamer = "0.24.2"
+gstreamer-pbutils = "0.24.2"
 gtk = { version = "0.10.1", package = "gtk4", features = ["gnome_46"] }
 musicbrainz_rs = { version = "0.12.0", default-features = false, features = ["blocking"] }
