@@ -698,67 +698,560 @@ fn select_format() -> AudioFormat {
     }
 }
 
-fn main() {
-    gstreamer::init().unwrap();
-    let version = gstreamer::version_string();
-    println!("{}", version);
+fn play_cd_track(track_number: u32, ml_for_ctrlc: &MainLoop) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n🎵 Lecture de la piste {} depuis le CD...", track_number);
+    
+    // Créer le pipeline GStreamer pour lire depuis le CD
+    let pipeline = Pipeline::new();
 
-    let disc = DiscId::read_features(None, Features::all()).expect("Reading disc failed");
+    let cdparanoiasrc = ElementFactory::make("cdiocddasrc").build()?;
+    cdparanoiasrc.set_property("track", track_number);
 
+    // Ajouter un buffer pour lisser la lecture
+    let queue = ElementFactory::make("queue").build()?;
+    queue.set_property("max-size-buffers", 0u32); // Pas de limite sur le nombre de buffers
+    queue.set_property("max-size-time", 5_000_000_000u64); // 5 secondes de buffer
+    queue.set_property("max-size-bytes", 10_485_760u32); // 10 MB de buffer
+    
+    let audioconvert = ElementFactory::make("audioconvert").build()?;
+    let audioresample = ElementFactory::make("audioresample").build()?;
+    let audiosink = ElementFactory::make("autoaudiosink").build()?;
+    
+    pipeline.add_many(&[&cdparanoiasrc, &queue, &audioconvert, &audioresample, &audiosink])?;
+    cdparanoiasrc.link(&queue)?;
+    queue.link(&audioconvert)?;
+    audioconvert.link(&audioresample)?;
+    audioresample.link(&audiosink)?;
+    
+    // Créer le bus pour les messages
+    let bus = pipeline.bus().expect("Pipeline without bus");
+    let ml_clone = ml_for_ctrlc.clone();
+    
+    // Cloner le pipeline pour l'utiliser dans le closure
+    let pipeline_clone_for_watch = pipeline.clone();
+    
+    let _bus_watch = bus.add_watch(move |_bus, msg| {
+        match msg.view() {
+            MessageView::Eos(_) => {
+                println!("\n✓ Lecture de la piste {} terminée", track_number);
+                ml_clone.quit();
+            }
+            MessageView::Error(err) => {
+                eprintln!("\n❌ Erreur lors de la lecture: {} ({:?})", err.error(), err.debug());
+                ml_clone.quit();
+            }
+            MessageView::StateChanged(state_changed) => {
+                if let Some(element) = state_changed.src().and_then(|s| s.downcast_ref::<Pipeline>()) {
+                    if element == &pipeline_clone_for_watch {
+                        let old = state_changed.old();
+                        let new = state_changed.current();
+                        if new == State::Playing && old != State::Playing {
+                            println!("▶ Lecture en cours... (Ctrl+C pour arrêter)");
+                        }
+                    }
+                }
+            }
+            MessageView::Tag(tag_msg) => {
+                let tags = tag_msg.tags();
+                if let Some(title) = tags.get::<gstreamer::tags::Title>() {
+                    println!("   Titre: {}", title.get());
+                }
+                if let Some(artist) = tags.get::<gstreamer::tags::Artist>() {
+                    println!("   Artiste: {}", artist.get());
+                }
+                if let Some(album) = tags.get::<gstreamer::tags::Album>() {
+                    println!("   Album: {}", album.get());
+                }
+            }
+            _ => {}
+        }
+        ControlFlow::Continue
+    })?;
+    
+    // Démarrer la lecture
+    pipeline.set_state(State::Playing)?;
+    
+    println!("\n⏸  Appuyez sur Ctrl+C pour arrêter la lecture");
+    
+    ml_for_ctrlc.run();
+    pipeline.set_state(State::Null)?;
+    
+    Ok(())
+}
+
+fn play_cd_audio() -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::{self, Write};
+    
+    println!("\n=== Lecteur de CD Audio ===");
+    println!("Lecture des informations du disque...\n");
+    
+    let disc = match DiscId::read_features(None, Features::all()) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("❌ Erreur lors de la lecture du disque: {}", e);
+            eprintln!("Assurez-vous qu'un CD audio est inséré dans le lecteur.");
+            return Err(Box::new(e));
+        }
+    };
+    
     print_disc_info(&disc);
-
-    // Sélectionner le format d'encodage
-    let audio_format = select_format();
-
-    // Nouvelle logique MusicBrainz simplifiée
-    println!("\n=== MusicBrainz Metadata ===");
-    match list_albums(&disc) {
-        Ok(albums) => {
-            if albums.is_empty() {
-                println!("No album metadata found");
+    
+    // Essayer de récupérer les métadonnées de MusicBrainz
+    println!("\n=== Récupération des métadonnées ===");
+    let albums = match list_albums(&disc) {
+        Ok(albums) if !albums.is_empty() => {
+            let album = if albums.len() == 1 {
+                &albums[0]
             } else {
-                for (i, album) in albums.iter().enumerate() {
-                    println!("\n--- Album {} ---", i + 1);
-                    println!("Title: {}", album.title);
-                    if let Some(ref artist) = album.artist {
-                        println!("Artist: {}", artist);
-                    }
-                    if let Some(ref date) = album.release_date {
-                        println!("Release Date: {}", date);
-                    }
-                    if let Some(ref country) = album.country {
-                        println!("Country: {}", country);
-                    }
-                    if let Some(ref barcode) = album.barcode {
-                        println!("Barcode: {}", barcode);
-                    }
-                    
-                    println!("Tracks ({}):", album.tracks.len());
-                    for track in &album.tracks {
-                        println!("  {}: {}", track.number, track.title);
-                        if let Some(duration) = track.duration {
-                            let seconds = duration / 1000;
-                            println!("     Duration: {}:{:02}", seconds / 60, seconds % 60);
+                select_album(&albums)
+            };
+            
+            println!("\nAlbum: {}", album.title);
+            if let Some(ref artist) = album.artist {
+                println!("Artiste: {}", artist);
+            }
+            println!("\nPistes disponibles ({}) :", album.tracks.len());
+            for track in &album.tracks {
+                print!("{}. {}", track.number, track.title);
+                if let Some(duration) = track.duration {
+                    let seconds = duration / 1000;
+                    print!(" ({}:{:02})", seconds / 60, seconds % 60);
+                }
+                println!();
+            }
+            Some(album.clone())
+        }
+        Ok(_) => {
+            println!("Aucune métadonnée trouvée sur MusicBrainz");
+            println!("\nPistes disponibles ({}) :", disc.last_track_num() - disc.first_track_num() + 1);
+            for i in disc.first_track_num()..=disc.last_track_num() {
+                println!("{}. Piste {}", i, i);
+            }
+            None
+        }
+        Err(e) => {
+            println!("Erreur lors de la récupération des métadonnées: {}", e);
+            println!("\nPistes disponibles ({}) :", disc.last_track_num() - disc.first_track_num() + 1);
+            for i in disc.first_track_num()..=disc.last_track_num() {
+                println!("{}. Piste {}", i, i);
+            }
+            None
+        }
+    };
+    
+    // Créer une MainLoop partagée et configurer le gestionnaire Ctrl+C une seule fois
+    let main_loop = MainLoop::new(None, false);
+    let ml_for_ctrlc = main_loop.clone();
+    
+    ctrlc::set_handler(move || {
+        println!("\n⏹ Arrêt de la lecture...");
+        ml_for_ctrlc.quit();
+    })?;
+    
+    let first_track = disc.first_track_num() as u32;
+    let last_track = disc.last_track_num() as u32;
+    
+    loop {
+        print!("\nChoisissez une piste à lire ({}-{}, 0 pour quitter): ", first_track, last_track);
+        io::stdout().flush().unwrap();
+        
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).unwrap();
+        let input = input.trim();
+        
+        match input.parse::<u32>() {
+            Ok(0) => {
+                println!("Au revoir !");
+                return Ok(());
+            }
+            Ok(choice) if choice >= first_track && choice <= last_track => {
+                // Afficher le titre si disponible
+                if let Some(ref album) = albums {
+                    if let Some(track) = album.tracks.iter().find(|t| t.number == choice) {
+                        println!("\n🎵 Piste {}: {}", choice, track.title);
+                        if let Some(ref artist) = track.artist {
+                            println!("   Artiste: {}", artist);
                         }
                     }
                 }
                 
-                // Sélectionner l'album à transcoder
-                let selected_album = if albums.len() == 1 {
-                    println!("\nTranscodage de l'album unique trouvé...");
-                    &albums[0]
-                } else {
-                    println!("\nPlusieurs albums trouvés.");
-                    select_album(&albums)
-                };
+                match play_cd_track(choice, &main_loop) {
+                    Ok(()) => {
+                        println!("\n✓ Lecture terminée avec succès");
+                    }
+                    Err(e) => {
+                        eprintln!("\n❌ Erreur lors de la lecture : {}", e);
+                    }
+                }
                 
-                if let Err(e) = transcode_all_tracks(&disc, selected_album, audio_format) {
-                    eprintln!("Erreur lors du transcodage : {}", e);
+                // Demander si l'utilisateur veut lire une autre piste
+                print!("\nLire une autre piste ? (o/N): ");
+                io::stdout().flush().unwrap();
+                
+                let mut input = String::new();
+                io::stdin().read_line(&mut input).unwrap();
+                let input = input.trim().to_lowercase();
+                
+                if input != "o" && input != "oui" && input != "y" && input != "yes" {
+                    println!("Au revoir !");
+                    return Ok(());
+                }
+                
+                // Réafficher la liste
+                if let Some(ref album) = albums {
+                    println!("\nPistes disponibles ({}) :", album.tracks.len());
+                    for track in &album.tracks {
+                        print!("{}. {}", track.number, track.title);
+                        if let Some(duration) = track.duration {
+                            let seconds = duration / 1000;
+                            print!(" ({}:{:02})", seconds / 60, seconds % 60);
+                        }
+                        println!();
+                    }
+                } else {
+                    println!("\nPistes disponibles ({}) :", last_track - first_track + 1);
+                    for i in first_track..=last_track {
+                        println!("{}. Piste {}", i, i);
+                    }
+                }
+            }
+            _ => {
+                println!("❌ Choix invalide. Veuillez entrer un nombre entre {} et {}, ou 0 pour quitter", first_track, last_track);
+            }
+        }
+    }
+}
+
+fn play_audio_file(file_path: &str, ml_for_ctrlc: &MainLoop) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n🎵 Lecture du fichier : {}", file_path);
+    
+    // Créer le pipeline GStreamer avec éléments individuels pour éviter les problèmes d'échappement
+    let pipeline = Pipeline::new();
+    
+    let filesrc = ElementFactory::make("filesrc").build()?;
+    filesrc.set_property_from_str("location", file_path);
+    
+    let decodebin = ElementFactory::make("decodebin").build()?;
+    let audioconvert = ElementFactory::make("audioconvert").build()?;
+    let audioresample = ElementFactory::make("audioresample").build()?;
+    let audiosink = ElementFactory::make("autoaudiosink").build()?;
+    
+    pipeline.add_many(&[&filesrc, &decodebin, &audioconvert, &audioresample, &audiosink])?;
+    filesrc.link(&decodebin)?;
+    audioconvert.link(&audioresample)?;
+    audioresample.link(&audiosink)?;
+    
+    // Lier decodebin dynamiquement quand les pads sont disponibles
+    let audioconvert_clone = audioconvert.clone();
+    decodebin.connect_pad_added(move |_element, src_pad| {
+        let sink_pad = audioconvert_clone
+            .static_pad("sink")
+            .expect("Failed to get static sink pad from audioconvert");
+        if sink_pad.is_linked() {
+            return;
+        }
+        let _ = src_pad.link(&sink_pad);
+    });
+    
+    // Créer le bus pour les messages
+    let bus = pipeline.bus().expect("Pipeline without bus");
+    let ml_clone = ml_for_ctrlc.clone();
+    
+    // Cloner le pipeline pour l'utiliser dans le closure
+    let pipeline_clone_for_watch = pipeline.clone();
+    
+    let _bus_watch = bus.add_watch(move |_bus, msg| {
+        match msg.view() {
+            MessageView::Eos(_) => {
+                println!("\n✓ Lecture terminée");
+                ml_clone.quit();
+            }
+            MessageView::Error(err) => {
+                eprintln!("\n❌ Erreur lors de la lecture: {} ({:?})", err.error(), err.debug());
+                ml_clone.quit();
+            }
+            MessageView::StateChanged(state_changed) => {
+                if let Some(element) = state_changed.src().and_then(|s| s.downcast_ref::<Pipeline>()) {
+                    if element == &pipeline_clone_for_watch {
+                        let old = state_changed.old();
+                        let new = state_changed.current();
+                        if new == State::Playing && old != State::Playing {
+                            println!("▶ Lecture en cours... (Ctrl+C pour arrêter)");
+                        }
+                    }
+                }
+            }
+            MessageView::Tag(tag_msg) => {
+                let tags = tag_msg.tags();
+                if let Some(title) = tags.get::<gstreamer::tags::Title>() {
+                    println!("   Titre: {}", title.get());
+                }
+                if let Some(artist) = tags.get::<gstreamer::tags::Artist>() {
+                    println!("   Artiste: {}", artist.get());
+                }
+                if let Some(album) = tags.get::<gstreamer::tags::Album>() {
+                    println!("   Album: {}", album.get());
+                }
+            }
+            _ => {}
+        }
+        ControlFlow::Continue
+    })?;
+    
+    // Démarrer la lecture
+    pipeline.set_state(State::Playing)?;
+    
+    println!("\n⏸  Appuyez sur Ctrl+C pour arrêter la lecture");
+    
+    ml_for_ctrlc.run();
+    pipeline.set_state(State::Null)?;
+    
+    Ok(())
+}
+
+fn list_audio_files(directory: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let mut files = Vec::new();
+    let audio_extensions = vec!["opus", "ogg", "flac", "mp3", "m4a", "wv", "wav"];
+    
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        
+        if path.is_file() {
+            if let Some(extension) = path.extension() {
+                if audio_extensions.contains(&extension.to_str().unwrap_or("")) {
+                    if let Some(file_name) = path.file_name() {
+                        files.push(file_name.to_str().unwrap_or("").to_string());
+                    }
                 }
             }
         }
+    }
+    
+    files.sort();
+    Ok(files)
+}
+
+fn select_directory() -> String {
+    use std::io::{self, Write};
+    
+    println!("\n=== Sélection du dossier ===");
+    print!("Entrez le chemin du dossier (ou appuyez sur Entrée pour 'output/'): ");
+    io::stdout().flush().unwrap();
+    
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).unwrap();
+    let input = input.trim();
+    
+    if input.is_empty() {
+        "output".to_string()
+    } else {
+        input.to_string()
+    }
+}
+
+fn select_and_play_file() -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::{self, Write};
+    
+    println!("\n=== Lecteur de fichiers audio ===");
+    
+    let directory = select_directory();
+    println!("Recherche de fichiers dans le dossier '{}'...\n", directory);
+    
+    let files = match list_audio_files(&directory) {
+        Ok(f) => f,
         Err(e) => {
-            println!("Error fetching album metadata: {}", e);
+            eprintln!("❌ Erreur lors de la lecture du dossier: {}", e);
+            return Err(e);
+        }
+    };
+    
+    if files.is_empty() {
+        println!("❌ Aucun fichier audio trouvé dans le dossier '{}'", directory);
+        return Ok(());
+    }
+    
+    // Créer une MainLoop partagée et configurer le gestionnaire Ctrl+C une seule fois
+    let main_loop = MainLoop::new(None, false);
+    let ml_for_ctrlc = main_loop.clone();
+    
+    ctrlc::set_handler(move || {
+        println!("\n⏹ Arrêt de la lecture...");
+        ml_for_ctrlc.quit();
+    })?;
+    
+    println!("Fichiers disponibles ({}) :", files.len());
+    for (i, file) in files.iter().enumerate() {
+        println!("{}. {}", i + 1, file);
+    }
+    
+    loop {
+        print!("\nChoisissez un fichier à lire (1-{}, 0 pour quitter): ", files.len());
+        io::stdout().flush().unwrap();
+        
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).unwrap();
+        let input = input.trim();
+        
+        match input.parse::<usize>() {
+            Ok(0) => {
+                println!("Au revoir !");
+                return Ok(());
+            }
+            Ok(choice) if choice >= 1 && choice <= files.len() => {
+                let selected_file = &files[choice - 1];
+                let file_path = format!("{}/{}", directory, selected_file);
+                
+                match play_audio_file(&file_path, &main_loop) {
+                    Ok(()) => {
+                        println!("\n✓ Lecture terminée avec succès");
+                    }
+                    Err(e) => {
+                        eprintln!("\n❌ Erreur lors de la lecture : {}", e);
+                    }
+                }
+                
+                // Demander si l'utilisateur veut lire un autre fichier
+                print!("\nLire un autre fichier ? (o/N): ");
+                io::stdout().flush().unwrap();
+                
+                let mut input = String::new();
+                io::stdin().read_line(&mut input).unwrap();
+                let input = input.trim().to_lowercase();
+                
+                if input != "o" && input != "oui" && input != "y" && input != "yes" {
+                    println!("Au revoir !");
+                    return Ok(());
+                }
+                
+                // Réafficher la liste
+                println!("\nFichiers disponibles ({}) :", files.len());
+                for (i, file) in files.iter().enumerate() {
+                    println!("{}. {}", i + 1, file);
+                }
+            }
+            _ => {
+                println!("❌ Choix invalide. Veuillez entrer un nombre entre 0 et {}", files.len());
+            }
+        }
+    }
+}
+
+fn select_mode() -> u8 {
+    use std::io::{self, Write};
+    
+    println!("\n=== Mode de fonctionnement ===");
+    println!("1. Ripper et transcoder un CD audio depuis un disque physique");
+    println!("2. Lire des fichiers audio depuis un dossier");
+    println!("3. Lire les pistes d'un CD audio directement");
+    
+    loop {
+        print!("\nChoisissez un mode (1-3) [défaut: 1]: ");
+        io::stdout().flush().unwrap();
+        
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).unwrap();
+        let input = input.trim();
+        
+        // Si l'utilisateur appuie juste sur Entrée, utiliser le mode par défaut
+        if input.is_empty() {
+            return 1;
+        }
+        
+        match input.parse::<u8>() {
+            Ok(choice) if choice >= 1 && choice <= 3 => {
+                return choice;
+            }
+            _ => {
+                println!("❌ Choix invalide. Veuillez entrer 1, 2 ou 3");
+            }
+        }
+    }
+}
+
+fn main() {
+    gstreamer::init().unwrap();
+    let version = gstreamer::version_string();
+    println!("{}", version);
+    
+    let mode = select_mode();
+    
+    match mode {
+        1 => {
+            // Mode 1: Ripper CD depuis un disque physique
+            let disc = DiscId::read_features(None, Features::all()).expect("Reading disc failed");
+            
+            print_disc_info(&disc);
+            
+            // Sélectionner le format d'encodage
+            let audio_format = select_format();
+            
+            // Nouvelle logique MusicBrainz simplifiée
+            println!("\n=== MusicBrainz Metadata ===");
+            match list_albums(&disc) {
+                Ok(albums) => {
+                    if albums.is_empty() {
+                        println!("No album metadata found");
+                    } else {
+                        for (i, album) in albums.iter().enumerate() {
+                            println!("\n--- Album {} ---", i + 1);
+                            println!("Title: {}", album.title);
+                            if let Some(ref artist) = album.artist {
+                                println!("Artist: {}", artist);
+                            }
+                            if let Some(ref date) = album.release_date {
+                                println!("Release Date: {}", date);
+                            }
+                            if let Some(ref country) = album.country {
+                                println!("Country: {}", country);
+                            }
+                            if let Some(ref barcode) = album.barcode {
+                                println!("Barcode: {}", barcode);
+                            }
+                            
+                            println!("Tracks ({}):", album.tracks.len());
+                            for track in &album.tracks {
+                                println!("  {}: {}", track.number, track.title);
+                                if let Some(duration) = track.duration {
+                                    let seconds = duration / 1000;
+                                    println!("     Duration: {}:{:02}", seconds / 60, seconds % 60);
+                                }
+                            }
+                        }
+                        
+                        // Sélectionner l'album à transcoder
+                        let selected_album = if albums.len() == 1 {
+                            println!("\nTranscodage de l'album unique trouvé...");
+                            &albums[0]
+                        } else {
+                            println!("\nPlusieurs albums trouvés.");
+                            select_album(&albums)
+                        };
+                        
+                        if let Err(e) = transcode_all_tracks(&disc, selected_album, audio_format) {
+                            eprintln!("Erreur lors du transcodage : {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("Error fetching album metadata: {}", e);
+                }
+            }
+        }
+        2 => {
+            // Mode 2: Lecteur de fichiers depuis un dossier
+            if let Err(e) = select_and_play_file() {
+                eprintln!("Erreur : {}", e);
+            }
+        }
+        3 => {
+            // Mode 3: Lecteur de CD audio direct
+            if let Err(e) = play_cd_audio() {
+                eprintln!("Erreur : {}", e);
+            }
+        }
+        _ => {
+            eprintln!("Mode invalide");
         }
     }
 }
