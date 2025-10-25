@@ -114,7 +114,7 @@ impl AudioPlayer for FilePlayer {
         let filesrc = ElementFactory::make("filesrc").build()?;
         filesrc.set_property_from_str("location", &self.file_path);
         
-        let decodebin = ElementFactory::make("decodebin").build()?;
+        let decodebin = ElementFactory::make("decodebin3").build()?;
         let audioconvert = ElementFactory::make("audioconvert").build()?;
         let audioresample = ElementFactory::make("audioresample").build()?;
         let audiosink = ElementFactory::make("autoaudiosink").build()?;
